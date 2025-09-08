@@ -1,1 +1,345 @@
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Himalayan Climate & Ecology Logger</title>
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <!-- Chart.js for tiny charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    :root { --bg:#0b1220; --card:#121a2b; --accent:#3fb950; --text:#e6edf3; --muted:#94a3b8; --danger:#ef4444; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; background:var(--bg); color:var(--text); }
+    header { padding:14px 18px; border-bottom:1px solid #1e293b; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    header h1 { font-size: clamp(1.1rem, 1.4rem, 1.6rem); margin:0; }
+    header .tag { background:#13233b; color:#a3e7b0; padding:4px 10px; border-radius:999px; font-size:.8rem; border:1px solid #1f3a4d; }
+    main { display:grid; grid-template-columns: 1fr 360px; gap:14px; padding:14px; }
+    #map { height: calc(100vh - 120px); min-height: 420px; width:100%; border:1px solid #1f2937; border-radius:14px; overflow:hidden; }
+    .panel { background:var(--card); border:1px solid #1e293b; border-radius:14px; padding:12px; display:flex; flex-direction:column; gap:10px; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; }
+    label { font-size:.9rem; color:#cbd5e1; }
+    input, select, button, textarea { background:#0f172a; border:1px solid #24324a; color:var(--text); border-radius:10px; padding:10px 12px; font-size:.95rem; }
+    button { cursor:pointer; transition:.15s; }
+    button.primary { background: linear-gradient(180deg, #1f7a4d, #166534); border-color:#0b3b22; }
+    button.primary:hover { filter: brightness(1.05); }
+    button.ghost { background:transparent; }
+    button.danger { background: linear-gradient(180deg, #883434, #7f1d1d); border-color:#3a0f0f; }
+    .kpi { display:flex; gap:10px; align-items:center; }
+    .kpi .pill { padding:4px 10px; border-radius:999px; border:1px solid #2a3a55; color:#cbd5e1; font-size:.8rem; }
+    .kpi .risk { font-weight:700; letter-spacing:.2px; }
+    .risk.low { color:#22c55e; }
+    .risk.med { color:#eab308; }
+    .risk.high { color:#ef4444; }
+    .list { max-height: 45vh; overflow:auto; border-top:1px dashed #223048; padding-top:8px; }
+    .item { padding:8px; border:1px solid #1e293b; border-radius:10px; margin-bottom:8px; background:#0d1424; }
+    .item h4 { margin:0 0 6px 0; font-size: .95rem; color:#e2e8f0; }
+    .muted { color:var(--muted); font-size:.85rem; }
+    .footer-note { font-size:.8rem; color:#94a3b8; line-height:1.3; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; }
+      #map { height: 60vh; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 aria-label="App title">Himalayan Climate & Ecology Logger</h1>
+    <span class="tag" aria-label="mode">Offline‑friendly · Client‑side only</span>
+    <div class="kpi" role="status" aria-live="polite">
+      <span class="pill">Observations: <strong id="obsCount">0</strong></span>
+      <span class="pill">Elevation band: <strong id="elevBand">—</strong></span>
+      <span class="pill">Today’s Risk: <strong id="riskPill" class="risk low">Low</strong></span>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <div id="map" role="application" aria-label="Interactive map of the Himalayas"></div>
+    </section>
+
+    <aside class="panel" aria-label="Controls and insights">
+      <div class="grid-2">
+        <div>
+          <label for="phenomenon">Phenomenon</label>
+          <select id="phenomenon" aria-describedby="phen-desc">
+            <option value="snow">Snow / Fresh snowfall</option>
+            <option value="ice">Ice / Glacier surface</option>
+            <option value="water">Water / Meltwater / Stream</option>
+            <option value="erosion">Erosion / Landslide evidence</option>
+            <option value="plant">Plant bloom / Vegetation shift</option>
+            <option value="animal">Wildlife sighting</option>
+            <option value="pollution">Waste / Pollution</option>
+            <option value="other">Other</option>
+          </select>
+          <div id="phen-desc" class="footer-note">Choose what you observed before placing a point.</div>
+        </div>
+        <div>
+          <label for="note">Notes (required)</label>
+          <input id="note" type="text" placeholder="e.g., Snow patch melted vs yesterday" aria-required="true" />
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="placeBtn" class="primary" title="Click, then click on map to place an observation">Place observation on map</button>
+        <button id="undoBtn" class="ghost" title="Undo last trail segment">Undo trail</button>
+        <button id="clearBtn" class="danger" title="Clear observations (local)">Clear</button>
+      </div>
+
+      <canvas id="barChart" height="120" aria-label="Observations chart" role="img"></canvas>
+
+      <div class="row">
+        <button id="csvBtn">Download CSV</button>
+        <button id="geoBtn">Download GeoJSON</button>
+      </div>
+
+      <div class="list" id="list" aria-live="polite"></div>
+
+      <details>
+        <summary>About & Data Ethics</summary>
+        <p class="footer-note">
+          • No personal data collected. Locations are rounded to ~100m (3 decimal places).<br/>
+          • Only your device stores data (LocalStorage). You control exports.<br/>
+          • Map tiles © Esri — Source: Esri, NASA, USGS. Built with Leaflet & Chart.js.
+        </p>
+      </details>
+    </aside>
+  </main>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+  // ======= Utility helpers =======
+  const $ = (id) => document.getElementById(id);
+  const toFixed3 = (n) => Number(n).toFixed(3);
+  const nowISO = () => new Date().toISOString();
+
+  // Simple elevation band estimator (very rough) by latitude (demo only)
+  function elevationBand(lat){
+    if(lat >= 28.8) return 'High (\u2265 4800m)';
+    if(lat >= 27.9) return 'Mid (3800–4800m)';
+    return 'Lower (\u2264 3800m)';
+  }
+
+  // Rule‑based risk score: temp anomaly proxy + phenomenon + band
+  function riskScore({lat, lng, phenomenon}){
+    // crude temp proxy by lat/lng (demo from user's original idea)
+    const temp = 20 - (lat - 26)*5 - (lng - 85)*2; // higher altitude → lower temp
+    let score = 0;
+    // phenomenon weights
+    const w = { snow:5, ice:12, water:10, erosion:15, plant:8, animal:2, pollution:6, other:3 };
+    score += (w[phenomenon] || 3);
+    // elevation band modifier
+    if (lat >= 28.8) score += 10; else if (lat >= 27.9) score += 6; else score += 3;
+    // temp anomaly (warmer → higher risk for melt)
+    if (temp > 8) score += 12; else if (temp > 2) score += 6; else score += 2;
+    return Math.min(100, Math.round(score));
+  }
+
+  function scoreLabel(score){
+    if(score >= 60) return {text:'High', cls:'high'};
+    if(score >= 35) return {text:'Medium', cls:'med'};
+    return {text:'Low', cls:'low'};
+  }
+
+  // ======= State =======
+  const state = {
+    placing:false,
+    points: JSON.parse(localStorage.getItem('obs_points_v1')||'[]'),
+    route: [],
+    polylines:[],
+    chart:null
+  };
+
+  function persist(){ localStorage.setItem('obs_points_v1', JSON.stringify(state.points)); }
+
+  // ======= Map =======
+  const map = L.map('map').setView([28.0043, 86.8572], 11);
+  const southWest = L.latLng(26, 85), northEast = L.latLng(30, 88);
+  const bounds = L.latLngBounds(southWest, northEast);
+  map.setMaxBounds(bounds);
+  map.on('drag', () => map.panInsideBounds(bounds, {animate:false}));
+
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles © Esri — Source: Esri, NASA, USGS'
+  }).addTo(map);
+
+  // ======= UI bindings =======
+  $('placeBtn').addEventListener('click', ()=>{
+    state.placing = true;
+    $('placeBtn').textContent = 'Click on the map…';
+  });
+
+  $('undoBtn').addEventListener('click', ()=>{
+    if(state.polylines.length>0){
+      map.removeLayer(state.polylines.pop());
+      state.route.pop();
+    }
+  });
+
+  $('clearBtn').addEventListener('click', ()=>{
+    if(confirm('Clear all local observations?')){
+      state.points = [];
+      persist();
+      renderList();
+      updateKpis();
+      if(state.chart) updateChart();
+    }
+  });
+
+  $('csvBtn').addEventListener('click', downloadCSV);
+  $('geoBtn').addEventListener('click', downloadGeoJSON);
+
+  // Place observation by clicking the map
+  map.on('click', (e)=>{
+    if(!state.placing){ return; }
+    const note = $('note').value.trim();
+    if(!note){ alert('Please enter a note before placing.'); return; }
+
+    const phen = $('phenomenon').value;
+    const lat = e.latlng.lat; const lng = e.latlng.lng;
+
+    // add to route polyline
+    state.route.push([lat,lng]);
+    if(state.route.length>1){
+      const line = L.polyline(state.route, {color:'#f43f5e', weight:3, opacity:0.8}).addTo(map);
+      state.polylines.push(line);
+    }
+
+    // create marker
+    const score = riskScore({lat,lng,phenomenon:phen});
+    const {text, cls} = scoreLabel(score);
+
+    const marker = L.marker([lat,lng]).addTo(map);
+    const rounded = {lat: Number(toFixed3(lat)), lng: Number(toFixed3(lng))};
+
+    const record = {
+      id: crypto.randomUUID(),
+      timeISO: nowISO(),
+      lat: rounded.lat,
+      lng: rounded.lng,
+      phenomenon: phen,
+      notes: note,
+      score,
+      band: elevationBand(lat)
+    };
+    state.points.push(record); persist();
+
+    marker.bindPopup(`<strong>${record.phenomenon.toUpperCase()}</strong><br/>`+
+      `Lat ${record.lat}, Lng ${record.lng}<br/>`+
+      `<em>${record.notes}</em><br/>`+
+      `Risk: <b class="${cls}">${text}</b> (${record.score})<br/>`+
+      `${record.band}<br/><small>${new Date(record.timeISO).toLocaleString()}</small>`).openPopup();
+
+    // reset placing UI
+    state.placing = false; $('placeBtn').textContent = 'Place observation on map';
+    $('note').value = '';
+
+    renderList();
+    updateKpis();
+    updateChart();
+  });
+
+  // ======= Rendering =======
+  function renderList(){
+    const list = $('list');
+    list.innerHTML = '';
+    const byTime = [...state.points].sort((a,b)=> new Date(b.timeISO)-new Date(a.timeISO));
+    if(byTime.length===0){ list.innerHTML = '<div class="muted">No observations yet. Choose a phenomenon, add a note, click “Place observation”, then click the map.</div>'; return; }
+
+    for(const p of byTime){
+      const li = document.createElement('div'); li.className='item';
+      li.innerHTML = `<h4>${p.phenomenon.toUpperCase()} · <span class="muted">${new Date(p.timeISO).toLocaleString()}</span></h4>
+        <div class="muted">Lat ${p.lat}, Lng ${p.lng} · ${p.band}</div>
+        <div>${p.notes}</div>
+        <div class="muted">Risk Score: <strong>${p.score}</strong></div>`;
+      list.appendChild(li);
+    }
+  }
+
+  function updateKpis(){
+    $('obsCount').textContent = state.points.length;
+    // derive a rough elevation band from latest point if exists
+    if(state.points.length){
+      const latest = state.points[state.points.length-1];
+      $('elevBand').textContent = latest.band;
+      const label = scoreLabel(latest.score);
+      const pill = $('riskPill');
+      pill.textContent = label.text; pill.className = 'risk ' + label.cls;
+    } else {
+      $('elevBand').textContent = '—';
+      $('riskPill').textContent = 'Low';
+      $('riskPill').className = 'risk low';
+    }
+  }
+
+  function updateChart(){
+    const counts = state.points.reduce((acc,p)=>{ acc[p.phenomenon]=(acc[p.phenomenon]||0)+1; return acc; },{});
+    const labels = Object.keys(counts);
+    const data = labels.map(k=>counts[k]);
+
+    const cfg = {
+      type: 'bar',
+      data: { labels, datasets: [{ label:'Observations', data }] },
+      options: { responsive:true, maintainAspectRatio:false, plugins:{ legend:{display:false} }, scales:{ y:{ beginAtZero:true } } }
+    };
+
+    if(!state.chart){
+      state.chart = new Chart($('#barChart'), cfg);
+    } else {
+      state.chart.data.labels = labels; state.chart.data.datasets[0].data = data; state.chart.update();
+    }
+  }
+
+  // ======= Export =======
+  function toCSV(rows){
+    const headers = ['id','timeISO','lat','lng','phenomenon','notes','score','band'];
+    const esc = (v) => '"'+String(v).replace(/"/g,'""')+'"';
+    const lines = [headers.join(',')].concat(rows.map(r=> headers.map(h=>esc(r[h] ?? '')).join(',')));
+    return lines.join('\n');
+  }
+
+  function download(filename, content, type){
+    const blob = new Blob([content], {type});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = filename; a.click();
+    setTimeout(()=> URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function downloadCSV(){
+    if(state.points.length===0){ alert('No data to export.'); return; }
+    download('observations.csv', toCSV(state.points), 'text/csv;charset=utf-8');
+  }
+
+  function downloadGeoJSON(){
+    if(state.points.length===0){ alert('No data to export.'); return; }
+    const fc = { type:'FeatureCollection', features: state.points.map(p=>({
+      type:'Feature', properties:{ id:p.id, timeISO:p.timeISO, phenomenon:p.phenomenon, notes:p.notes, score:p.score, band:p.band }, geometry:{ type:'Point', coordinates:[p.lng, p.lat] }
+    }))};
+    download('observations.geojson', JSON.stringify(fc, null, 2), 'application/geo+json');
+  }
+
+  // ======= Init =======
+  (function init(){
+    // On load, render saved points as markers
+    for(const p of state.points){
+      const marker = L.marker([p.lat, p.lng]).addTo(map);
+      const {text, cls} = scoreLabel(p.score||riskScore(p));
+      marker.bindPopup(`<strong>${p.phenomenon.toUpperCase()}</strong><br/>`+
+        `Lat ${p.lat}, Lng ${p.lng}<br/>`+
+        `<em>${p.notes}</em><br/>`+
+        `Risk: <b class="${cls}">${text}</b> (${p.score})<br/>`+
+        `${p.band || elevationBand(p.lat)}<br/><small>${new Date(p.timeISO).toLocaleString()}</small>`);
+    }
+    renderList();
+    updateKpis();
+    updateChart();
+  })();
+  </script>
+</body>
+</html>
+
